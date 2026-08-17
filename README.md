@@ -138,15 +138,19 @@
     - `POSTGRES_PASSWORD`
     - `JWT_KEY` - secret key used for generating tokens (long random string)
     - `ENCRYPTION_KEY` - Fernet key for encrypting calendar credentials at rest; generate with:
+
         ```bash
         python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
         ```
+
     - `NOTIFER_API_TOKEN_HASH` - SHA-256 hash of the admin API token; generate with `echo -n "your-secret-token" | sha256sum`
     - `DASHBOARD_USERNAME` - username for the admin web dashboard (default: `admin`)
     - `DASHBOARD_PASSWORD_HASH` - hashed dashboard password; generate with:
+
         ```bash
         docker compose exec notifer python -c "from shared.auth_utils import hash_password; print(hash_password('yourpassword'))"
         ```
+
     - `API_URL` - the URL at which users will access the app (for example `https://notifer.emilpopovic.com`)
 
 4. **Deploy:**
@@ -185,8 +189,75 @@ A password-protected web UI is available at `/dashboard/`. It provides:
 - **User management:** list all subscribers, pause/unpause/delete with confirmation.
 - **Audit log:** paginated, filterable history of every action taken in the system.
 - **Per-user view:** subscription details and the full action history for a specific user.
+- **Migration:** download an encrypted bundle of all server data, or restore one — see below.
 
 Credentials are configured via `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD_HASH` in `.env`.
+
+## Moving to a New Machine
+
+`/dashboard/migration` produces a single encrypted file holding everything NotiFER
+keeps outside `.env` — the subscriptions, the audit log and the cached calendar
+baselines. Hand that file to the app on the new machine and the move is done.
+
+The bundle is **re-keyed at the boundary**: calendar tokens are decrypted with the
+old machine's `ENCRYPTION_KEY` when the bundle is built and re-encrypted with the
+new machine's key when it is applied, so the two deployments do not have to share
+a key. The payload itself is encrypted with a passphrase you choose — it is a dump
+of every subscriber's live calendar credential, so it is never written in the clear.
+
+### On the old machine
+
+Log in to `/dashboard/migration`, re-enter your dashboard password, pick a strong
+passphrase and download the bundle. Copy `ENCRYPTION_KEY` and `TIMEZONE` out of
+`.env` separately, over a different channel than the file itself.
+
+From the shell instead:
+
+```bash
+make exportdb FILE=notifer-export.nfer
+```
+
+### On the new machine
+
+```bash
+# 1. Fill in .env: same ENCRYPTION_KEY and TIMEZONE, fresh SMTP credentials,
+#    and the new API_URL if the hostname changed.
+#    Set WORKER=false and DATA_IMPORT=true for now.
+make initdb
+
+# 2. Check the bundle before committing to it — writes nothing
+make importdb FILE=notifer-export.nfer DRY_RUN=1
+
+# 3. Restore it
+make importdb FILE=notifer-export.nfer
+
+# 4. Confirm every restored token decrypts under this machine's key
+make verifydb
+
+# 5. Set WORKER=true and DATA_IMPORT=false, then start for real
+make upd
+```
+
+Or upload the bundle at `/dashboard/migration` once `DATA_IMPORT=true`, which
+offers the same validate-then-apply flow. Finally, move DNS, shut the old machine
+down, and **delete the bundle from both machines**.
+
+### Notes
+
+- **`ENCRYPTION_KEY` is the one thing you cannot lose.** Without it the old
+  database is unreadable and no bundle can be built from it. `make verifydb`
+  reports a mismatch immediately rather than leaving it to surface as a worker
+  failure an hour later.
+- **SMTP credentials, `DASHBOARD_PASSWORD_HASH` and `NOTIFER_API_TOKEN_HASH` are
+  deliberately not in the bundle.** Set them by hand.
+- **Activation and management links already sitting in inboxes** are signed with
+  `JWT_KEY` and point at `API_URL`. They keep working only if both carry over;
+  the export has an opt-in checkbox for including `JWT_KEY` in the bundle.
+- **Subscriptions with no cached calendar** re-baseline silently on the first
+  worker cycle — no notification is sent, but a change made during the migration
+  window will not be reported. Including cached calendars (the default) avoids this.
+- `make snapshot` remains the low-level `pg_dumpall` backup. It is not a
+  substitute here: it cannot re-key `calendar_auth` for a different machine.
 
 ## Admin API
 
@@ -209,12 +280,3 @@ All endpoints require a `Bearer` token matching `NOTIFER_API_TOKEN_HASH`.
 ## License
 
 NotiFER is open source and available under the [MIT License](LICENSE)
-
-## Contact
-
-For questions, support, or a demo, please contact:
-**Emil Popović**
-<admin@emilpopovic.me>
-
-_NotiFER is currently developed and maintained by Emil Popović, a student at FER._
-

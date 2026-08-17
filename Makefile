@@ -33,6 +33,32 @@ checkdb:
 encryptdb:
 	docker compose -f $(COMPOSE_FILE) run --build --rm notifer python -m src.db_manager encrypt
 
+.PHONY: verifydb
+verifydb:
+	docker compose -f $(COMPOSE_FILE) run --build --rm notifer python -m src.db_manager verify
+
+# Migration bundles. FILE is relative to this directory, which is mounted at
+# /migration inside the one-off container.
+# The passphrase is prompted for; set MIGRATION_PASSPHRASE to script it.
+FILE ?= notifer-export.nfer
+MIGRATION_RUN = docker compose -f $(COMPOSE_FILE) run --build --rm \
+	-v "$(CURDIR):/migration" -e MIGRATION_PASSPHRASE
+
+.PHONY: exportdb
+exportdb:
+	@echo "Exporting to $(FILE) — contains live calendar tokens, keep it safe"
+	@# Runs as the host user so the bundle lands owned by you, not root.
+	$(MIGRATION_RUN) --user "$(shell id -u):$(shell id -g)" \
+		notifer python -m src.db_manager export /migration/$(FILE) $(EXPORT_FLAGS)
+
+# make importdb FILE=bundle.nfer DRY_RUN=1   # validate only
+# make importdb FILE=bundle.nfer            # replace all data
+.PHONY: importdb
+importdb:
+	@# Stays root: restoring cached calendars writes into the app_data volume.
+	$(MIGRATION_RUN) notifer python -m src.db_manager import /migration/$(FILE) \
+		$(if $(DRY_RUN),--dry-run,--replace)
+
 .PHONY: snapshot
 snapshot:
 	@echo "Ensuring postgres container is running..."

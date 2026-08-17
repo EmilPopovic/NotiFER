@@ -35,6 +35,15 @@ class Settings(BaseSettings):
         return os.getenv('ALLOW_QUERY_ALL', 'false').lower() == 'true'
     
     @property
+    def data_export_enabled(self) -> bool:
+        return os.getenv('DATA_EXPORT', 'true').lower() == 'true'
+
+    @property
+    def data_import_enabled(self) -> bool:
+        # Off by default: only turned on while migrating onto a new machine.
+        return os.getenv('DATA_IMPORT', 'false').lower() == 'true'
+
+    @property
     def notifer_api_token_hash(self) -> str:
         return os.getenv('NOTIFER_API_TOKEN_HASH', '')
 

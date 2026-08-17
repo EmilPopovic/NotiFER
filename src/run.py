@@ -13,6 +13,7 @@ os.environ.setdefault('TZ', os.getenv('TIMEZONE', 'Europe/Zagreb'))
 if hasattr(time, 'tzset'):
     time.tzset()  # Unix only; no-op on Windows
 from api.main import create_app
+from config import get_settings
 from worker.dependencies import get_worker_service
 
 # Configure logging
@@ -69,10 +70,13 @@ def main():
     threads.append(api_thread)
 
     # Start worker thread
-    worker_thread = threading.Thread(target=start_worker_thread, name='WorkerThread')
-    worker_thread.daemon = True
-    worker_thread.start()
-    threads.append(worker_thread)
+    if get_settings().worker_enabled:
+        worker_thread = threading.Thread(target=start_worker_thread, name='WorkerThread')
+        worker_thread.daemon = True
+        worker_thread.start()
+        threads.append(worker_thread)
+    else:
+        logger.info('WORKER is disabled, running API only')
 
     # Keep main thread alive
     try:

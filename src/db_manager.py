@@ -1,7 +1,10 @@
+import getpass
+import os
 import sys
 import logging
 from sqlalchemy import MetaData, text
-from .shared.database import engine, Base
+from .shared import migration
+from .shared.database import engine, Base, SessionLocal
 from .shared.encryption import get_fernet
 
 logger = logging.getLogger(__name__)
@@ -117,6 +120,158 @@ def encrypt_calendar_auth():
     logger.info(f'Encryption migration complete: {migrated} row(s) encrypted, {skipped} already encrypted.')
 
 
+def _read_passphrase(confirm: bool = False) -> str:
+    """
+    Read the bundle passphrase from MIGRATION_PASSPHRASE, or prompt for it.
+
+    The env var exists so a migration can be scripted; interactive use should
+    prefer the prompt so the passphrase stays out of the shell history.
+    """
+    passphrase = os.getenv('MIGRATION_PASSPHRASE')
+    if passphrase:
+        logger.info('Using passphrase from MIGRATION_PASSPHRASE')
+        return passphrase
+
+    passphrase = getpass.getpass('Bundle passphrase: ')
+    if confirm and passphrase != getpass.getpass('Confirm passphrase: '):
+        raise SystemExit('Passphrases do not match.')
+    return passphrase
+
+
+def export_bundle(path: str, include_calendars: bool, include_audit_log: bool, include_jwt_key: bool):
+    """Write an encrypted migration bundle to `path`."""
+    from .shared import models  # noqa: F401
+
+    if os.path.exists(path):
+        raise SystemExit(f'Refusing to overwrite an existing file: {path}')
+
+    passphrase = _read_passphrase(confirm=True)
+    session = SessionLocal()
+    try:
+        data, summary = migration.build_bundle(
+            session,
+            passphrase,
+            include_calendars=include_calendars,
+            include_audit_log=include_audit_log,
+            include_jwt_key=include_jwt_key,
+            api_url=os.getenv('API_URL', ''),
+        )
+        migration.create_export_audit_entry(session, summary)
+    except migration.MigrationError as e:
+        raise SystemExit(f'Export failed: {e}')
+    finally:
+        session.close()
+
+    # 0600: the bundle holds every subscriber's calendar token.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'wb') as f:
+        f.write(data)
+
+    logger.info(
+        f'Wrote {path}: {summary["users"]} user(s), {summary["audit_logs"]} log(s), '
+        f'{summary["calendars"]} calendar(s), {summary["bytes"]} bytes'
+    )
+    if include_jwt_key:
+        logger.warning('This bundle contains JWT_KEY. Treat it as a secrets file.')
+
+
+def import_bundle(path: str, replace: bool, dry_run: bool):
+    """Apply (or validate) a migration bundle from `path`."""
+    from .shared import models  # noqa: F401
+
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+    except OSError as e:
+        raise SystemExit(f'Cannot read {path}: {e}')
+
+    try:
+        envelope = migration.read_envelope(data)
+    except migration.MigrationError as e:
+        raise SystemExit(f'Import failed: {e}')
+
+    counts = envelope['source']['counts']
+    logger.info(
+        f'Bundle created {envelope["created"]} on {envelope["source"].get("api_url") or "unknown host"}: '
+        f'{counts["users"]} user(s), {counts["audit_logs"]} log(s), {counts["calendars"]} calendar(s)'
+    )
+
+    passphrase = _read_passphrase()
+    session = SessionLocal()
+    try:
+        payload = migration.load_bundle(data, passphrase)
+        report = migration.apply_bundle(session, payload, replace=replace, dry_run=dry_run)
+    except migration.MigrationError as e:
+        raise SystemExit(f'Import failed: {e}')
+    finally:
+        session.close()
+
+    if dry_run:
+        logger.info(f'Dry run OK — nothing written. Would restore: {report}')
+        if report['existing_users']:
+            logger.warning(
+                f'This database already holds {report["existing_users"]} subscription(s) and '
+                f'{report["existing_logs"]} audit entry/entries. Applying will discard them.'
+            )
+    else:
+        logger.info(f'Import complete: {report}')
+        if report['rebaselined']:
+            logger.info(
+                f'{report["rebaselined"]} subscription(s) have no cached calendar and will '
+                're-baseline silently on the first worker cycle (no notification is sent).'
+            )
+        if report['includes_jwt_key']:
+            logger.warning(
+                'The bundle carries a JWT_KEY. It was NOT applied — copy it into .env by hand '
+                'if links already sent by email must keep working.'
+            )
+        logger.info('Now run `python -m src.db_manager verify` to confirm the restored tokens decrypt.')
+
+
+def verify_encryption():
+    """Confirm every stored calendar_auth decrypts under the current ENCRYPTION_KEY."""
+    from .shared import models  # noqa: F401
+
+    session = SessionLocal()
+    try:
+        checked, failures = migration.verify_encryption(session)
+    finally:
+        session.close()
+
+    if not checked:
+        logger.info('No subscriptions stored, nothing to verify.')
+        return True
+
+    if failures:
+        shown = ', '.join(failures[:10])
+        more = f' (and {len(failures) - 10} more)' if len(failures) > 10 else ''
+        logger.error(
+            f'{len(failures)} of {checked} row(s) failed to decrypt: {shown}{more}. '
+            'ENCRYPTION_KEY does not match this data.'
+        )
+        return False
+
+    logger.info(f'All {checked} stored calendar token(s) decrypt correctly.')
+    return True
+
+
+def _usage():
+    print('Usage:')
+    print('  python -m src.db_manager create          # Create all tables')
+    print('  python -m src.db_manager drop            # Drop all tables (with confirmation)')
+    print('  python -m src.db_manager drop  --force   # Drop all tables (no confirmation)')
+    print('  python -m src.db_manager reset           # Drop and recreate (with confirmation)')
+    print('  python -m src.db_manager reset --force   # Drop and recreate (no confirmation)')
+    print('  python -m src.db_manager check           # Check if database is initialized')
+    print('  python -m src.db_manager encrypt         # Encrypt plaintext calendar_auth values')
+    print('  python -m src.db_manager verify          # Check every calendar_auth decrypts')
+    print('')
+    print('  python -m src.db_manager export <file> [--no-calendars] [--no-audit-log] [--include-jwt-key]')
+    print('  python -m src.db_manager import <file> [--replace] [--dry-run]')
+    print('')
+    print('  Passphrase comes from MIGRATION_PASSPHRASE, or is prompted for.')
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -138,15 +293,30 @@ def main():
             check_database()
         elif command == 'encrypt':
             encrypt_calendar_auth()
+        elif command == 'verify':
+            if not verify_encryption():
+                sys.exit(1)
+        elif command == 'export':
+            if len(sys.argv) < 3 or sys.argv[2].startswith('-'):
+                print('Usage: python -m src.db_manager export <file> [--no-calendars] [--no-audit-log] [--include-jwt-key]')
+                sys.exit(1)
+            export_bundle(
+                sys.argv[2],
+                include_calendars='--no-calendars' not in sys.argv,
+                include_audit_log='--no-audit-log' not in sys.argv,
+                include_jwt_key='--include-jwt-key' in sys.argv,
+            )
+        elif command == 'import':
+            if len(sys.argv) < 3 or sys.argv[2].startswith('-'):
+                print('Usage: python -m src.db_manager import <file> [--replace] [--dry-run]')
+                sys.exit(1)
+            import_bundle(
+                sys.argv[2],
+                replace='--replace' in sys.argv,
+                dry_run='--dry-run' in sys.argv,
+            )
         else:
-            print('Usage:')
-            print('  python -m src.db_manager create          # Create all tables')
-            print('  python -m src.db_manager drop            # Drop all tables (with confirmation)')
-            print('  python -m src.db_manager drop  --force   # Drop all tables (no confirmation)')
-            print('  python -m src.db_manager reset           # Drop and recreate (with confirmation)')
-            print('  python -m src.db_manager reset --force   # Drop and recreate (no confirmation)')
-            print('  python -m src.db_manager check           # Check if database is initialized')
-            print('  python -m src.db_manager encrypt         # Encrypt plaintext calendar_auth values')
+            _usage()
             sys.exit(1)
     else:
         create_all_tables()

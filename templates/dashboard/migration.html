@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8">
+  <title>Migration – NotiFER Dashboard</title>
+  <link rel="stylesheet" href="/static/css/shared.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+
+<nav class="dash-nav">
+  <a href="/dashboard/" class="dash-nav-title">NotiFER Dashboard</a>
+  <div class="dash-nav-actions">
+    <a href="/dashboard/migration" class="nav-btn">Migration</a>
+    <form method="post" action="/dashboard/logout" style="margin:0">
+      <button type="submit" class="nav-btn">Log out</button>
+    </form>
+  </div>
+</nav>
+
+<div class="dash-main">
+  <a href="/dashboard/" class="back-link">&#8592; Back to dashboard</a>
+
+  {% if error %}
+  <div class="status error visible" style="margin-bottom:1.5rem">{{ error }}</div>
+  {% endif %}
+
+  {% if import_report %}
+  <div class="status success visible" style="margin-bottom:1.5rem">
+    {% if import_report.dry_run %}
+      <strong>Bundle is valid.</strong> Nothing was written.
+    {% else %}
+      <strong>Import complete.</strong>
+    {% endif %}
+    Users: {{ import_report.users }} ·
+    Audit entries: {{ import_report.audit_logs }} ·
+    Calendars restored: {{ import_report.calendars }} ·
+    Will re-baseline: {{ import_report.rebaselined }}
+    {% if import_report.replaced_users %}
+      · Discarded: {{ import_report.replaced_users }} existing user(s)
+    {% endif %}
+    {% if import_report.dry_run and import_report.existing_users %}
+      <br>This database currently holds {{ import_report.existing_users }} subscription(s) and
+      {{ import_report.existing_logs }} audit entr{{ 'y' if import_report.existing_logs == 1 else 'ies' }} —
+      applying the bundle will discard them.
+    {% endif %}
+    {% if import_report.includes_jwt_key %}
+      <br>This bundle carries a <code>JWT_KEY</code>. It is <em>not</em> applied automatically —
+      copy it into <code>.env</code> by hand if existing email links must keep working.
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if bundle_info %}
+  <div class="card">
+    <div class="card-header">Uploaded bundle</div>
+    <div class="user-info-grid">
+      <div class="info-item">
+        <div class="info-label">Created</div>
+        <div class="info-value">{{ bundle_info.created }}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Source</div>
+        <div class="info-value">{{ bundle_info.source.api_url or '—' }}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Timezone</div>
+        <div class="info-value">{{ bundle_info.source.timezone or '—' }}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Users</div>
+        <div class="info-value">{{ bundle_info.source.counts.users }}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Audit entries</div>
+        <div class="info-value">{{ bundle_info.source.counts.audit_logs }}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Calendars</div>
+        <div class="info-value">{{ bundle_info.source.counts.calendars }}</div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Export -->
+  <div class="card">
+    <div class="card-header">
+      Export server data
+      <span class="card-count">Download a bundle to move this server</span>
+    </div>
+
+    <div class="mig-body">
+      <div class="mig-warning">
+        The bundle contains <strong>every subscriber's live FER calendar token</strong> and
+        email address. It is encrypted with the passphrase you choose below and with nothing
+        else — pick a strong one, move it over a different channel than the file itself, and
+        delete the bundle from both machines once the move is done.
+      </div>
+
+      {% if not export_enabled %}
+      <div class="status error visible">Data export is disabled (<code>DATA_EXPORT=false</code>).</div>
+      {% else %}
+      <form method="post" action="/dashboard/export" autocomplete="off">
+        <div class="input-group">
+          <label for="exp-password">Dashboard password</label>
+          <input type="password" id="exp-password" name="password" required
+                 autocomplete="current-password">
+        </div>
+        <div class="input-group">
+          <label for="exp-passphrase">Bundle passphrase (min {{ min_passphrase_length }} characters)</label>
+          <input type="password" id="exp-passphrase" name="passphrase"
+                 minlength="{{ min_passphrase_length }}" required autocomplete="new-password">
+        </div>
+        <div class="input-group">
+          <label for="exp-passphrase-confirm">Confirm passphrase</label>
+          <input type="password" id="exp-passphrase-confirm" name="passphrase_confirm"
+                 minlength="{{ min_passphrase_length }}" required autocomplete="new-password">
+        </div>
+
+        <div class="mig-checks">
+          <label class="mig-check">
+            <input type="checkbox" name="include_calendars" checked>
+            <span>
+              <strong>Include cached calendars</strong>
+              <em>Keeps change detection seamless. Without them the first cycle on the new
+              machine silently re-baselines and cannot report changes made during the move.</em>
+            </span>
+          </label>
+          <label class="mig-check">
+            <input type="checkbox" name="include_audit_log" checked>
+            <span>
+              <strong>Include audit log</strong>
+              <em>History only. Safe to leave out if the bundle is getting large.</em>
+            </span>
+          </label>
+          <label class="mig-check">
+            <input type="checkbox" name="include_jwt_key">
+            <span>
+              <strong>Include JWT signing key</strong>
+              <em>Only needed so activation and pause links already sitting in inboxes keep
+              working. Turns the bundle into a secrets file — leave off unless you need it.</em>
+            </span>
+          </label>
+        </div>
+
+        <button type="submit" class="button">Download bundle</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Import -->
+  <div class="card">
+    <div class="card-header">
+      Import server data
+      <span class="card-count">
+        {% if import_enabled %}Enabled{% else %}Disabled{% endif %}
+      </span>
+    </div>
+
+    <div class="mig-body">
+      {% if not import_enabled %}
+      <div class="status error visible" style="margin-top:0">
+        Data import is off. Set <code>DATA_IMPORT=true</code> in <code>.env</code> and restart,
+        then turn it back off once the migration is done. You can also import from the shell with
+        <code>make importdb FILE=export.nfer</code>, which works with the app stopped.
+      </div>
+      {% else %}
+      <div class="mig-warning">
+        <code>ENCRYPTION_KEY</code> must be set on this machine before importing — the restored
+        calendar tokens are re-encrypted under it. Applying a bundle replaces every existing
+        subscription and audit entry in one transaction. Validate first.
+      </div>
+
+      <form method="post" action="/dashboard/import" enctype="multipart/form-data" autocomplete="off">
+        <div class="input-group">
+          <label for="imp-bundle">Bundle file</label>
+          <input type="file" id="imp-bundle" name="bundle" accept=".nfer,application/json" required>
+        </div>
+        <div class="input-group">
+          <label for="imp-passphrase">Bundle passphrase</label>
+          <input type="password" id="imp-passphrase" name="passphrase" required autocomplete="off">
+        </div>
+        <div class="input-group">
+          <label for="imp-password">Dashboard password</label>
+          <input type="password" id="imp-password" name="password" required autocomplete="current-password">
+        </div>
+
+        <div class="mig-checks">
+          <label class="mig-check">
+            <input type="radio" name="mode" value="validate" checked onchange="toggleConfirm()">
+            <span>
+              <strong>Validate only</strong>
+              <em>Decrypt and check the bundle, report what it holds, write nothing.</em>
+            </span>
+          </label>
+          <label class="mig-check">
+            <input type="radio" name="mode" value="apply" onchange="toggleConfirm()">
+            <span>
+              <strong>Apply — replace all data</strong>
+              <em>Discards existing subscriptions and audit entries, then restores the bundle.</em>
+            </span>
+          </label>
+        </div>
+
+        <div class="input-group" id="confirm-group" hidden>
+          <label for="imp-confirm">Type <code>REPLACE</code> to confirm</label>
+          <input type="text" id="imp-confirm" name="confirm" placeholder="REPLACE" autocomplete="off">
+        </div>
+
+        <button type="submit" class="button">Run import</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Runbook -->
+  <div class="card">
+    <div class="card-header">Moving to a new machine</div>
+    <div class="mig-body">
+      <ol class="mig-steps">
+        <li><strong>Here:</strong> download a bundle above. Copy <code>ENCRYPTION_KEY</code> and
+          <code>TIMEZONE</code> out of <code>.env</code> separately.</li>
+        <li><strong>New machine:</strong> run <code>deploy.sh</code>, then fill <code>.env</code> —
+          same <code>ENCRYPTION_KEY</code> and <code>TIMEZONE</code>, fresh SMTP credentials, and
+          the new <code>API_URL</code> if the hostname changed.</li>
+        <li>Set <code>WORKER=false</code> and <code>DATA_IMPORT=true</code>, then
+          <code>make initdb</code>.</li>
+        <li>Import the bundle — validate first, then apply.</li>
+        <li>Run <code>make verifydb</code>. It decrypts every stored token and names any that
+          fail, which is how an <code>ENCRYPTION_KEY</code> mismatch shows up immediately instead
+          of as a worker crash an hour later.</li>
+        <li>Set <code>WORKER=true</code> and <code>DATA_IMPORT=false</code>, restart, move DNS,
+          shut the old machine down.</li>
+        <li>Delete the bundle from both machines.</li>
+      </ol>
+      <p class="mig-note">
+        SMTP credentials, <code>DASHBOARD_PASSWORD_HASH</code> and
+        <code>NOTIFER_API_TOKEN_HASH</code> are deliberately not in the bundle. Set them by hand.
+      </p>
+    </div>
+  </div>
+
+</div><!-- /dash-main -->
+
+<script>
+function toggleConfirm() {
+  var apply = document.querySelector('input[name="mode"][value="apply"]');
+  document.getElementById('confirm-group').hidden = !apply.checked;
+}
+toggleConfirm();
+</script>
+
+</body>
+</html>

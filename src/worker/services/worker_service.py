@@ -5,6 +5,7 @@ from typing import List
 from datetime import datetime
 import threading
 
+from shared import maintenance
 from shared.crud import get_active_subscriptions_no_session
 from shared.models import UserCalendar
 from worker.services.calendar_service import CalendarService
@@ -122,6 +123,7 @@ class WorkerService:
         '''Run a single processing cycle'''
         logger.info('Starting processing cycle')
         cycle_start = time.time()
+        maintenance.mark_cycle_start()
 
         try:
             # Get all subscriptions
@@ -146,19 +148,25 @@ class WorkerService:
             return False
         
         finally:
+            maintenance.mark_cycle_end()
             self.last_cycle = datetime.now()
-    
+
     def run_continuously(self) -> None:
         '''Run the worker in continuous mode.'''
         logger.info(f'Worker started with a {self.worker_interval}-second interval')
 
-        while True:
+        while not self._terminate.is_set():
             try:
-                self._running = True
                 cycle_start = time.time()
 
-                # Run processing cycle
-                self.run_single_cycle()
+                # A data import holds the gate while it rewrites the subscription
+                # table; skip the cycle rather than polling against moving rows.
+                if maintenance.is_paused():
+                    logger.info('Maintenance pause active, skipping this cycle')
+                else:
+                    self._running = True
+                    self.run_single_cycle()
+                    self._running = False
 
                 # Calculate sleep time (ensure minimum interval)
                 cycle_duration = time.time() - cycle_start
@@ -166,7 +174,8 @@ class WorkerService:
 
                 if sleep_time > 0:
                     logger.info(f'Cycle took {cycle_duration:.2f}s. Sleeping for {sleep_time:.2f}s')
-                    time.sleep(sleep_time)
+                    # Interruptible so stop() takes effect without waiting out the interval.
+                    self._terminate.wait(sleep_time)
                 else:
                     logger.warning(f'Cycle took {cycle_duration:.2f}s, longer than interval {self.worker_interval}s')
 
@@ -176,7 +185,10 @@ class WorkerService:
                 break
             except Exception as e:
                 logger.exception(f'Unexpected error in worker loop: {e}')
+                self._running = False
                 cycle_start_time = time.time()
                 self.record_cycle_complete(cycle_start_time, 'critical_error', 0)
                 logger.info(f'Sleeping for {self.worker_interval} seconds before retry')
-                time.sleep(self.worker_interval)
+                self._terminate.wait(self.worker_interval)
+
+        logger.info('Worker loop exited')

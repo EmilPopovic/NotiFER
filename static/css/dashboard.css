@@ -461,6 +461,112 @@ tr:hover td {
 }
 
 /* ========================================
+   Migration Page
+   ======================================== */
+.mig-body {
+    padding: 1.25rem;
+}
+
+/* shared.css only styles text/email inputs */
+.mig-body input[type="password"],
+.mig-body input[type="file"] {
+    width: 100%;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 1rem;
+    font-family: inherit;
+    box-sizing: border-box;
+    background: white;
+}
+
+.mig-body input[type="password"]:focus,
+.mig-body input[type="file"]:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, .1);
+}
+
+.mig-body .input-group {
+    max-width: 460px;
+}
+
+.mig-warning {
+    background: #fff3cd;
+    border: 1px solid #ffe08a;
+    color: #6b5200;
+    border-radius: var(--radius);
+    padding: .875rem 1rem;
+    font-size: .9rem;
+    line-height: 1.55;
+    margin-bottom: 1.25rem;
+}
+
+.mig-checks {
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+    margin: 1.25rem 0;
+}
+
+.mig-check {
+    display: flex;
+    gap: .65rem;
+    align-items: flex-start;
+    font-size: .9rem;
+    cursor: pointer;
+    max-width: 620px;
+}
+
+.mig-check input {
+    margin-top: .2rem;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+}
+
+.mig-check em {
+    display: block;
+    color: #777;
+    font-size: .84rem;
+    font-style: normal;
+    line-height: 1.5;
+    margin-top: .15rem;
+}
+
+.mig-steps {
+    margin: 0;
+    padding-left: 1.35rem;
+    font-size: .9rem;
+    line-height: 1.65;
+    color: #444;
+}
+
+.mig-steps li {
+    margin-bottom: .5rem;
+}
+
+.mig-note {
+    font-size: .85rem;
+    color: #777;
+    line-height: 1.55;
+    margin: 1rem 0 0;
+}
+
+.mig-body code,
+.mig-note code,
+.mig-steps code,
+.mig-warning code,
+.status code {
+    background: #f0f0f0;
+    padding: .1em .35em;
+    border-radius: 3px;
+    font-family: ui-monospace, 'Cascadia Code', 'Courier New', monospace;
+    font-size: .88em;
+}
+
+/* ========================================
    Responsive
    ======================================== */
 @media (max-width: 640px) {
