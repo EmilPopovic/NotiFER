@@ -124,23 +124,23 @@
             <input type="checkbox" name="include_calendars" checked>
             <span>
               <strong>Include cached calendars</strong>
-              <em>Keeps change detection seamless. Without them the first cycle on the new
-              machine silently re-baselines and cannot report changes made during the move.</em>
+              <span class="mig-hint">Keeps change detection seamless. Without them the first cycle on the new
+              machine silently re-baselines and cannot report changes made during the move.</span>
             </span>
           </label>
           <label class="mig-check">
             <input type="checkbox" name="include_audit_log" checked>
             <span>
               <strong>Include audit log</strong>
-              <em>History only. Safe to leave out if the bundle is getting large.</em>
+              <span class="mig-hint">History only. Safe to leave out if the bundle is getting large.</span>
             </span>
           </label>
           <label class="mig-check">
             <input type="checkbox" name="include_jwt_key">
             <span>
               <strong>Include JWT signing key</strong>
-              <em>Only needed so activation and pause links already sitting in inboxes keep
-              working. Turns the bundle into a secrets file — leave off unless you need it.</em>
+              <span class="mig-hint">Only needed so activation and pause links already sitting in inboxes keep
+              working. Turns the bundle into a secrets file — leave off unless you need it.</span>
             </span>
           </label>
         </div>
@@ -193,14 +193,14 @@
             <input type="radio" name="mode" value="validate" checked onchange="toggleConfirm()">
             <span>
               <strong>Validate only</strong>
-              <em>Decrypt and check the bundle, report what it holds, write nothing.</em>
+              <span class="mig-hint">Decrypt and check the bundle, report what it holds, write nothing.</span>
             </span>
           </label>
           <label class="mig-check">
             <input type="radio" name="mode" value="apply" onchange="toggleConfirm()">
             <span>
               <strong>Apply — replace all data</strong>
-              <em>Discards existing subscriptions and audit entries, then restores the bundle.</em>
+              <span class="mig-hint">Discards existing subscriptions and audit entries, then restores the bundle.</span>
             </span>
           </label>
         </div>

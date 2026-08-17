@@ -526,11 +526,10 @@ tr:hover td {
     accent-color: var(--primary);
 }
 
-.mig-check em {
+.mig-hint {
     display: block;
     color: #777;
     font-size: .84rem;
-    font-style: normal;
     line-height: 1.5;
     margin-top: .15rem;
 }

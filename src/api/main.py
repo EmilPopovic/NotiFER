@@ -12,6 +12,23 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+
+class RevalidatingStaticFiles(StaticFiles):
+    '''
+    Serve static assets with `Cache-Control: no-cache`.
+
+    StaticFiles sends only ETag and Last-Modified. With no Cache-Control a browser
+    falls back to heuristic freshness — roughly 10% of the file's age — so a
+    stylesheet that had sat unchanged for months gets cached for days and an edit
+    never reaches anyone still holding the old copy. `no-cache` means "store it,
+    but revalidate before use", so the ETag still turns repeat requests into 304s.
+    '''
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers['Cache-Control'] = 'no-cache'
+        return response
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Print all registered routes
@@ -39,7 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(admin.router)
     app.include_router(dashboard.router)
 
-    app.mount('/static', StaticFiles(directory='static'), name='static')
+    app.mount('/static', RevalidatingStaticFiles(directory='static'), name='static')
 
     return app
 
